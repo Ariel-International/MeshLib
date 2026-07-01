@@ -1,7 +1,6 @@
 package com.mesh;
 
 import java.util.Arrays;
-import java.util.HexFormat;
 
 /**
  * A peer's stable identity token — the X.509 DER-encoded public key of its
@@ -29,11 +28,19 @@ public final class PeerId {
     public byte[] toBytes() { return Arrays.copyOf(mBytes, mBytes.length); }
 
     /** Returns the full hex-encoded PeerId string. */
-    public String toHex() { return HexFormat.of().formatHex(mBytes); }
+    public String toHex() {
+        StringBuilder sb = new StringBuilder(mBytes.length * 2);
+        for (byte b : mBytes) sb.append(String.format("%02x", b & 0xff));
+        return sb.toString();
+    }
 
     /** Reconstructs a PeerId from its hex representation. */
     public static PeerId fromHex(String hex) {
-        return new PeerId(HexFormat.of().parseHex(hex));
+        int len = hex.length();
+        byte[] data = new byte[len / 2];
+        for (int i = 0; i < len; i += 2)
+            data[i / 2] = (byte) Integer.parseInt(hex.substring(i, i + 2), 16);
+        return new PeerId(data);
     }
 
     @Override public boolean equals(Object o) {
