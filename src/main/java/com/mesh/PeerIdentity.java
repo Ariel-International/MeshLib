@@ -122,7 +122,10 @@ public class PeerIdentity {
 
     private static byte[] mReadFile(File f) throws Exception {
         try (FileInputStream fis = new FileInputStream(f)) {
-            return fis.readAllBytes();
+            byte[] buf = new byte[(int) f.length()];
+            int off = 0, n;
+            while (off < buf.length && (n = fis.read(buf, off, buf.length - off)) != -1) off += n;
+            return buf;
         }
     }
 

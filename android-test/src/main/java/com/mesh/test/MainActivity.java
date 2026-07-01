@@ -174,11 +174,20 @@ public class MainActivity extends Activity {
 
         log("PeerId: " + identity.getPeerId().toHex().substring(0, 24) + "…");
 
-        // L3 router
+        MeshSession[] sSession = new MeshSession[1];
+        MeshLog[]     sLog     = new MeshLog[1];
+
+        // L3 router — dispatches to session and log by layer field
         MeshRouter router = new MeshRouter(identity.getPeerId(), new MeshRouter.Listener() {
             @Override public void onDelivered(PeerId from, JSONObject payload) {
                 String layer = payload.optString("layer");
                 log("L3 delivered layer=" + layer + " from=" + from);
+                if ("session".equals(layer)) {
+                    JSONObject inner = payload.optJSONObject("payload");
+                    if (inner != null && sSession[0] != null) sSession[0].handle(from, inner);
+                } else if ("message".equals(layer)) {
+                    if (sLog[0] != null) sLog[0].handle(from, payload);
+                }
             }
             @Override public void onTopologyChanged() { log("L3 topology changed"); }
         });
@@ -195,6 +204,7 @@ public class MainActivity extends Activity {
                 log("L4 presence: " + nick + (online ? " online" : " offline"));
             }
         });
+        sSession[0] = session;
         session.setNickname("Server");
 
         // L5 log
@@ -206,6 +216,7 @@ public class MainActivity extends Activity {
                     recv.set(text);
                     gotMsg.countDown();
                 });
+        sLog[0] = meshLog;
 
         // L2 server
         MeshConfig cfg = new MeshConfig.Builder().port(PORT).bindIp("0.0.0.0").build();
@@ -268,11 +279,20 @@ public class MainActivity extends Activity {
         if (identity == null) return;
         log("PeerId: " + identity.getPeerId().toHex().substring(0, 24) + "…");
 
-        // L3 router
+        MeshSession[] cSession = new MeshSession[1];
+        MeshLog[]     cLog     = new MeshLog[1];
+
+        // L3 router — dispatches to session and log by layer field
         MeshRouter router = new MeshRouter(identity.getPeerId(), new MeshRouter.Listener() {
             @Override public void onDelivered(PeerId from, JSONObject payload) {
                 String layer = payload.optString("layer");
                 log("L3 delivered layer=" + layer);
+                if ("session".equals(layer)) {
+                    JSONObject inner = payload.optJSONObject("payload");
+                    if (inner != null && cSession[0] != null) cSession[0].handle(from, inner);
+                } else if ("message".equals(layer)) {
+                    if (cLog[0] != null) cLog[0].handle(from, payload);
+                }
             }
             @Override public void onTopologyChanged() { log("L3 topology changed"); }
         });
@@ -289,6 +309,7 @@ public class MainActivity extends Activity {
                 log("L4 presence: " + nick + (online ? " online" : " offline"));
             }
         });
+        cSession[0] = session;
         session.setNickname("Client");
 
         // L5 log
@@ -302,6 +323,7 @@ public class MainActivity extends Activity {
                         gotReply.countDown();
                     }
                 });
+        cLog[0] = meshLog;
 
         // L2 — direct TCP connect
         CountDownLatch linked = new CountDownLatch(1);
