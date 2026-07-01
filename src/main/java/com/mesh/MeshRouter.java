@@ -7,16 +7,31 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * L3 Routing — topology tracking + hop-by-hop delivery.
+ * L3 Routing — topology tracking and hop-by-hop frame delivery.
  *
- * Frame type "route":    { type:"route", from:"<hex>", to:"<hex>", payload:{} }
- * Frame type "topology": full adjacency list, flooded on change + periodic tick.
- * Frames with a "layer" field are L4+ and get flooded/delivered directly.
+ * <p>Sits above L2 ({@link MeshLink}) and below L4 ({@link MeshSession}).
+ * Owns the live link map, the topology graph ({@link MeshTopology}), and a
+ * periodic sync thread that re-floods the local adjacency list every 3 s so
+ * nodes that missed a change can catch up.
+ *
+ * <h3>Frame types handled internally</h3>
+ * <ul>
+ *   <li>{@code type:"topology"} — adjacency update, merged and re-flooded.
+ *   <li>{@code type:"route"} — unicast payload; forwarded toward destination
+ *       or delivered to {@link Listener#onDelivered} if this node is the target.
+ * </ul>
+ *
+ * <h3>L4+ frames</h3>
+ * Frames carrying a {@code "layer"} field (e.g. {@code layer:"session"} or
+ * {@code layer:"message"}) are delivered to the listener and re-flooded to
+ * all other links.
  */
 public class MeshRouter {
 
     public interface Listener {
+        /** A frame addressed to this node has arrived. Fires on the read thread. */
         void onDelivered(PeerId from, JSONObject payload);
+        /** The set of reachable peers has changed. */
         void onTopologyChanged();
     }
 
@@ -42,17 +57,20 @@ public class MeshRouter {
         mLog = log;
     }
 
+    /** Starts the periodic topology-sync thread. */
     public void start() {
         mRunning = true;
         mSyncThread = new Thread(this::mSyncLoop, "mesh-l3-sync");
         mSyncThread.start();
     }
 
+    /** Stops the sync thread. Does not close any links. */
     public void stop() {
         mRunning = false;
         if (mSyncThread != null) mSyncThread.interrupt();
     }
 
+    /** Called by {@link MeshLink.Listener#onReady} — registers the link and updates topology. */
     public void onLinkReady(MeshLink link, PeerId remotePeerId) {
         mLinks.put(remotePeerId.toHex(), link);
         mTopology.addLink(remotePeerId);
@@ -61,6 +79,7 @@ public class MeshRouter {
         mListener.onTopologyChanged();
     }
 
+    /** Called by {@link MeshLink.Listener#onClosed} — removes the link and updates topology. */
     public void onLinkClosed(MeshLink link, PeerId remotePeerId) {
         if (remotePeerId == null) return;
         mLinks.remove(remotePeerId.toHex(), link);
@@ -70,6 +89,7 @@ public class MeshRouter {
         mListener.onTopologyChanged();
     }
 
+    /** Called by {@link MeshLink.Listener#onMessage} — dispatches routing and L4+ frames. */
     public void onLinkMessage(MeshLink link, JSONObject json) {
         if (json.has("layer")) {
             try {

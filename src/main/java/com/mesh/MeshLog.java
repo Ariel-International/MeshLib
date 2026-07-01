@@ -10,10 +10,27 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * L5 Message log / sync.
- * Message ID = (senderHex, seq). Seq is per-sender monotonic.
- * Reconciliation: peers exchange {peerId: lastSeenSeq} on reconnect and replay gaps.
- * Retention: 500 messages per session, in-memory only.
+ * L5 Message log — stores, deduplicates, and synchronises chat messages.
+ *
+ * <h3>Message identity</h3>
+ * Each message is identified by {@code (senderHex, seq)}: a sender-scoped
+ * monotonically increasing sequence number assigned at send time. This pair
+ * is globally unique within a session and used for deduplication when the
+ * same message arrives via multiple flood paths.
+ *
+ * <h3>Ordering</h3>
+ * Messages are sorted by wall-clock timestamp. No vector clocks — chat
+ * display order is "good enough" with timestamp ordering.
+ *
+ * <h3>Reconciliation</h3>
+ * When a new L2 link comes up, call {@link #sendSyncSummary} to send a
+ * {@code {peerId: lastSeenSeq}} digest to the new peer. The remote side
+ * replies with a {@code sync_replay} containing any messages this node
+ * has not yet seen.
+ *
+ * <h3>Retention</h3>
+ * At most 500 messages per session are kept in memory. Oldest messages are
+ * dropped when the limit is exceeded. There is no persistence across restarts.
  */
 public class MeshLog {
 
@@ -42,9 +59,9 @@ public class MeshLog {
     private final PeerId     mSelf;
     private final MeshRouter mRouter;
     private final Listener   mListener;
-    private MeshLogger       mLog = MeshLogger.DEFAULT;
+    private MeshLogger       mLogger = MeshLogger.DEFAULT;
 
-    private final Map<String, List<Msg>>          mLog2    = new ConcurrentHashMap<>();
+    private final Map<String, List<Msg>>          mMessages = new ConcurrentHashMap<>();
     private final Map<String, Map<String, Long>>  mSeenSeqs = new ConcurrentHashMap<>();
     private long mNextSeq = 0;
 
@@ -52,8 +69,13 @@ public class MeshLog {
         mSelf = self; mRouter = router; mListener = listener;
     }
 
-    public void setLogger(MeshLogger log) { mLog = log; }
+    public void setLogger(MeshLogger log) { mLogger = log; }
 
+    /**
+     * Sends a chat message into a session. Stores it locally, fires the
+     * listener immediately (for self-echo in the UI), and floods it to all
+     * connected peers.
+     */
     public void send(String sessionId, String nickname, String text) {
         long seq = mNextSeq++;
         long ts  = System.currentTimeMillis();
@@ -70,9 +92,14 @@ public class MeshLog {
             payload.put("text", text);
             payload.put("ts", ts);
             mRouter.floodAll(mWrap(payload));
-        } catch (Exception e) { mLog.e("MESH", "L5 send: " + e.getMessage()); }
+        } catch (Exception e) { mLogger.e("MESH", "L5 send: " + e.getMessage()); }
     }
 
+    /**
+     * Sends a sync summary ({@code peerId → lastSeenSeq}) to a specific link.
+     * Call this after a new L2 link becomes ready so the remote peer can
+     * identify and replay any messages this node has not yet received.
+     */
     public void sendSyncSummary(String sessionId, MeshLink link) {
         try {
             JSONObject payload = new JSONObject();
@@ -84,9 +111,13 @@ public class MeshLog {
                 seqs.put(e.getKey(), e.getValue());
             payload.put("seqs", seqs);
             link.send(mWrap(payload));
-        } catch (Exception e) { mLog.e("MESH", "L5 sync summary: " + e.getMessage()); }
+        } catch (Exception e) { mLogger.e("MESH", "L5 sync summary: " + e.getMessage()); }
     }
 
+    /**
+     * Dispatches an incoming L5 frame ({@code layer:"message"}) delivered by L3.
+     * Handles {@code chat}, {@code sync_summary}, and {@code sync_replay} sub-types.
+     */
     public void handle(PeerId from, JSONObject frame) {
         try {
             JSONObject payload = frame.optJSONObject("payload");
@@ -95,13 +126,13 @@ public class MeshLog {
                 case "chat":         mHandleChat(payload);              break;
                 case "sync_summary": mHandleSyncSummary(from, payload); break;
                 case "sync_replay":  mHandleSyncReplay(payload);        break;
-                default: mLog.w("MESH", "L5 unknown: " + payload.optString("type"));
+                default: mLogger.w("MESH", "L5 unknown: " + payload.optString("type"));
             }
-        } catch (Exception e) { mLog.e("MESH", "L5 handle: " + e.getMessage()); }
+        } catch (Exception e) { mLogger.e("MESH", "L5 handle: " + e.getMessage()); }
     }
 
     public List<Msg> getMessages(String sessionId) {
-        List<Msg> list = mLog2.get(sessionId);
+        List<Msg> list = mMessages.get(sessionId);
         return list != null ? Collections.unmodifiableList(list) : Collections.emptyList();
     }
 
@@ -125,7 +156,7 @@ public class MeshLog {
     private void mHandleSyncSummary(PeerId from, JSONObject p) throws Exception {
         String session = p.getString("session");
         JSONObject theirSeqs = p.getJSONObject("seqs");
-        List<Msg> log = mLog2.getOrDefault(session, Collections.emptyList());
+        List<Msg> log = mMessages.getOrDefault(session, Collections.emptyList());
         JSONArray replay = new JSONArray();
         for (Msg msg : log) {
             if (msg.seq > theirSeqs.optLong(msg.senderHex, -1)) {
@@ -157,7 +188,7 @@ public class MeshLog {
     }
 
     private void mStore(String sessionId, Msg msg) {
-        List<Msg> list = mLog2.computeIfAbsent(sessionId, k -> new ArrayList<>());
+        List<Msg> list = mMessages.computeIfAbsent(sessionId, k -> new ArrayList<>());
         list.add(msg);
         list.sort((a, b) -> Long.compare(a.timestampMs, b.timestampMs));
         while (list.size() > MAX_MESSAGES) list.remove(0);

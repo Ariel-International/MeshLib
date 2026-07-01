@@ -4,23 +4,34 @@ import java.util.Arrays;
 import java.util.HexFormat;
 
 /**
- * A peer's identity token: the X.509-encoded public key of an EC P-256 keypair.
- * Equality and hash are by value.
+ * A peer's stable identity token — the X.509 DER-encoded public key of its
+ * P-256 EC keypair.
+ *
+ * <p>A PeerId is generated once by {@link PeerIdentity} and never changes for
+ * the lifetime of a node's key material. It is the only addressing primitive
+ * in the mesh: routing, session membership, and message deduplication all key
+ * on PeerId hex strings.
+ *
+ * <p>Equality and hashing are by value (byte-by-byte comparison of the
+ * encoded key). {@link #toString()} returns a truncated hex string for log
+ * readability; use {@link #toHex()} for the full value.
  */
 public final class PeerId {
 
     private final byte[] mBytes;
 
+    /** Constructs a PeerId from a raw X.509 DER-encoded EC public key. */
     public PeerId(byte[] encoded) {
         mBytes = Arrays.copyOf(encoded, encoded.length);
     }
 
+    /** Returns the raw X.509 DER-encoded bytes (defensive copy). */
     public byte[] toBytes() { return Arrays.copyOf(mBytes, mBytes.length); }
 
-    public String toHex() {
-        return HexFormat.of().formatHex(mBytes);
-    }
+    /** Returns the full hex-encoded PeerId string. */
+    public String toHex() { return HexFormat.of().formatHex(mBytes); }
 
+    /** Reconstructs a PeerId from its hex representation. */
     public static PeerId fromHex(String hex) {
         return new PeerId(HexFormat.of().parseHex(hex));
     }
@@ -33,6 +44,7 @@ public final class PeerId {
 
     @Override public int hashCode() { return Arrays.hashCode(mBytes); }
 
+    /** Returns the first 16 hex chars followed by "…" for compact log output. */
     @Override public String toString() {
         String h = toHex();
         return h.length() > 16 ? h.substring(0, 16) + "…" : h;
