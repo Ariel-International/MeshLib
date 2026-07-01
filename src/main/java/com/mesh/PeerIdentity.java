@@ -41,6 +41,16 @@ public class PeerIdentity {
         mPeerId  = new PeerId(mKeyPair.getPublic().getEncoded());
     }
 
+    /**
+     * Constructor for subclasses that manage their own key storage (e.g. AndroidKeyStore).
+     * The subclass generates the keypair and passes it in; this class only calls
+     * {@link #sign(byte[])} which subclasses can also override.
+     */
+    protected PeerIdentity(KeyPair keyPair) {
+        mKeyPair = keyPair;
+        mPeerId  = new PeerId(keyPair.getPublic().getEncoded());
+    }
+
     public void setLogger(MeshLogger log) { mLog = log; }
 
     public PeerId getPeerId() { return mPeerId; }

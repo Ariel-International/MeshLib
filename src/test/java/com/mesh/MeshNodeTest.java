@@ -64,7 +64,7 @@ class MeshNodeTest {
     @Test @Timeout(5)
     void transientIdentityNoPersistence() {
         // null storageDir = in-memory only, must not throw
-        PeerIdentity id = new PeerIdentity(null);
+        PeerIdentity id = new PeerIdentity((java.io.File) null);
         assertNotNull(id.getPeerId());
         byte[] sig = id.sign("data".getBytes());
         assertNotNull(sig);

@@ -283,6 +283,6 @@ public class MeshNode {
     public static void main(String[] args) {
         System.out.println("MeshLib " + MeshPort.DEFAULT);
         System.out.println("Run tests: ./gradlew test");
-        System.out.println("This node's PeerId: " + new PeerIdentity(null).getPeerId());
+        System.out.println("This node's PeerId: " + new PeerIdentity((File) null).getPeerId());
     }
 }
