@@ -14,6 +14,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.mesh.MeshConfig;
+import com.mesh.MeshFinder;
 import com.mesh.MeshLink;
 import com.mesh.MeshLog;
 import com.mesh.MeshLogger;
@@ -52,7 +53,7 @@ public class MainActivity extends Activity {
 
     private static final int PORT    = MeshPort.DEFAULT;
     private static final String SID  = "test-session";
-    private static final int TIMEOUT = 10;
+    private static final int TIMEOUT = 30;
 
     private TextView  mLog;
     private ScrollView mScroll;
@@ -107,6 +108,15 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
         btnRow.addView(btnClient, bp2);
 
+        Button btnScan = new Button(this);
+        btnScan.setText("⊙ SCAN");
+        btnScan.setBackgroundColor(0xFF4A2D6C);
+        btnScan.setTextColor(0xFFFFFFFF);
+        LinearLayout.LayoutParams bp3 = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        bp3.setMargins(8, 0, 0, 0);
+        btnRow.addView(btnScan, bp3);
+
         LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         rowParams.setMargins(0, 0, 0, 16);
@@ -130,6 +140,7 @@ public class MainActivity extends Activity {
         btnServer.setOnClickListener(v -> {
             btnServer.setEnabled(false);
             btnClient.setEnabled(false);
+            btnScan.setEnabled(false);
             mLog.setText("");
             new Thread(() -> runServer(), "mesh-test-server").start();
         });
@@ -139,18 +150,32 @@ public class MainActivity extends Activity {
             if (ip.isEmpty()) { log("⚠ Enter server IP first"); return; }
             btnServer.setEnabled(false);
             btnClient.setEnabled(false);
+            btnScan.setEnabled(false);
             mLog.setText("");
             new Thread(() -> runClient(ip), "mesh-test-client").start();
         });
 
-        // Show local IP on screen
+        btnScan.setOnClickListener(v -> {
+            btnServer.setEnabled(false);
+            btnClient.setEnabled(false);
+            btnScan.setEnabled(false);
+            mLog.setText("");
+            new Thread(() -> runScan(), "mesh-test-scan").start();
+        });
+
+        // Show all local IPs and prefill gateway as server IP
         new Thread(() -> {
-            String ip = MeshServer.mLanInterfaceIp();
-            log("Local IP: " + (ip != null ? ip : "unknown"));
+            java.util.List<String> ips = MeshServer.mLanInterfaceIps();
+            if (ips.isEmpty()) log("Local IP: unknown");
+            else for (String ip : ips) log("Local IP: " + ip);
             log("Port: " + PORT);
             log("");
             log("Run SERVER on one device, CLIENT on the other.");
-            log("Enter server's IP in the field before pressing CLIENT.");
+            String gw = mDefaultGateway();
+            if (gw != null) {
+                mUi.post(() -> etIp.setText(gw));
+                log("Gateway (prefilled): " + gw);
+            }
         }).start();
     }
 
@@ -257,6 +282,52 @@ public class MainActivity extends Activity {
         server.stop();
         router.stop();
         log("\nServer done.");
+    }
+
+    // -------------------------------------------------------------------------
+    // Scan mode — discover peers, then run client test against first found
+    // -------------------------------------------------------------------------
+
+    private void runScan() {
+        log("\n=== SCAN MODE ===");
+        MeshConfig cfg = new MeshConfig.Builder().port(PORT).build();
+        MeshFinder finder = new MeshFinder(cfg);
+        finder.setLogger(meshLogger());
+
+        java.util.List<InetAddress> found = new java.util.ArrayList<>();
+        CountDownLatch done = new CountDownLatch(1);
+
+        new Thread(() -> finder.start(new MeshFinder.Listener() {
+            @Override public void onPeerFound(InetAddress address, boolean isGateway) {
+                String ip = address.getHostAddress();
+                log("L1 peer found: " + ip + (isGateway ? " (gateway)" : ""));
+                synchronized (found) { found.add(address); }
+                // Cancel sweep as soon as we have one peer
+                finder.cancel();
+            }
+            @Override public void onScanComplete() { done.countDown(); }
+        }), "mesh-finder").start();
+
+        try {
+            log("Scanning subnet…");
+            if (!done.await(30, TimeUnit.SECONDS)) {
+                log("❌ Scan timeout");
+                return;
+            }
+        } catch (InterruptedException e) {
+            log("Interrupted");
+            return;
+        }
+
+        synchronized (found) {
+            if (found.isEmpty()) {
+                log("❌ No peers found on subnet");
+                return;
+            }
+            String ip = found.get(0).getHostAddress();
+            log("Connecting to " + ip + "…\n");
+            runClient(ip);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -391,6 +462,37 @@ public class MainActivity extends Activity {
             log("❌ " + name + ": " + e.getMessage());
             return null;
         }
+    }
+
+    private String mDefaultGateway() {
+        try {
+            // Preferred LAN IPs in mesh priority order (hotspot > wlan > other)
+            java.util.List<String> meshIps = MeshServer.mLanInterfaceIps();
+
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
+                    getSystemService(CONNECTIVITY_SERVICE);
+
+            // Iterate all networks, find the one whose local address is in our mesh IP list
+            for (android.net.Network net : cm.getAllNetworks()) {
+                android.net.LinkProperties lp = cm.getLinkProperties(net);
+                if (lp == null) continue;
+                boolean isMeshIface = false;
+                for (android.net.LinkAddress la : lp.getLinkAddresses()) {
+                    if (meshIps.contains(la.getAddress().getHostAddress())) {
+                        isMeshIface = true;
+                        break;
+                    }
+                }
+                if (!isMeshIface) continue;
+                for (android.net.RouteInfo route : lp.getRoutes()) {
+                    if (route.isDefaultRoute()
+                            && route.getGateway() instanceof java.net.Inet4Address) {
+                        return route.getGateway().getHostAddress();
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
     }
 
     private InetAddress mResolve(String ip) {

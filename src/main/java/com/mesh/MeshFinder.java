@@ -222,29 +222,11 @@ public class MeshFinder {
 
     /**
      * Returns the IPv4 address of the best LAN interface.
-     * Prefers wlan/ap/swlan/eth; falls back to any non-loopback IPv4.
+     * Delegates to {@link MeshServer#mLanInterfaceIp()} for consistent
+     * interface selection (whitelist-only, hotspot preferred).
      */
     static String mLanInterfaceIp() {
-        try {
-            Enumeration<NetworkInterface> ifaces = NetworkInterface.getNetworkInterfaces();
-            String fallback = null;
-            while (ifaces.hasMoreElements()) {
-                NetworkInterface iface = ifaces.nextElement();
-                if (iface.isLoopback() || !iface.isUp()) continue;
-                String name = iface.getName();
-                Enumeration<InetAddress> addrs = iface.getInetAddresses();
-                while (addrs.hasMoreElements()) {
-                    InetAddress addr = addrs.nextElement();
-                    if (!(addr instanceof Inet4Address) || addr.isLoopbackAddress()) continue;
-                    String ip = addr.getHostAddress();
-                    if (name.startsWith("wlan") || name.startsWith("ap")
-                            || name.startsWith("swlan") || name.startsWith("eth"))
-                        return ip;
-                    if (fallback == null) fallback = ip;
-                }
-            }
-            return fallback;
-        } catch (Exception e) { return null; }
+        return MeshServer.mLanInterfaceIp();
     }
 
     /**

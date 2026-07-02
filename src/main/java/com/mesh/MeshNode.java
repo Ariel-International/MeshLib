@@ -280,9 +280,39 @@ public class MeshNode {
      * When run as a standalone jar, prints this node's PeerId and usage info.
      * Run {@code ./gradlew test} to execute the in-process test suite.
      */
-    public static void main(String[] args) {
-        System.out.println("MeshLib " + MeshPort.DEFAULT);
-        System.out.println("Run tests: ./gradlew test");
-        System.out.println("This node's PeerId: " + new PeerIdentity((File) null).getPeerId());
+    public static void main(String[] args) throws Exception {
+        MeshConfig cfg = new MeshConfig.Builder()
+                .port(MeshPort.DEFAULT)
+                .bindIp("0.0.0.0")
+                .build();
+        MeshNode node = new MeshNode(null, "PC-Server", cfg);
+        node.setLogger(MeshLogger.STDOUT);
+        node.start();
+        node.createSession("test-session", "Test Room", true);
+        System.out.println("MeshLib server running on port " + cfg.port);
+        System.out.println("PeerId: " + node.getPeerId().toHex());
+        System.out.println("Waiting for connections… (Ctrl+C to stop)");
+
+        // Wire chat: print received messages and auto-reply
+        node.setChatListener(new MeshNode.ChatListener() {
+            @Override public void onMessage(String sid, String nick, String text, long ts) {
+                System.out.println("[" + nick + "] " + text);
+                try { node.sendMessage(sid, "PC-Server", "Hello back from PC, " + nick + "!"); }
+                catch (Exception ignored) {}
+            }
+            @Override public void onPeerConnected(String hex) {
+                System.out.println("Peer connected: " + hex.substring(0, 16) + "…");
+            }
+            @Override public void onPeerDisconnected(String hex) {
+                System.out.println("Peer disconnected: " + hex.substring(0, 16) + "…");
+            }
+            @Override public void onSessionUpdated(String id, String name,
+                    java.util.Map<String, String> members) {
+                System.out.println("Session " + name + ": " + members.size() + " members");
+            }
+        });
+
+        // Block forever
+        Thread.currentThread().join();
     }
 }
