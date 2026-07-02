@@ -121,4 +121,28 @@ public class MeshTopology {
     public Set<String> allPeers() {
         return Collections.unmodifiableSet(mGraph.keySet());
     }
+
+    /**
+     * BFS from self — returns hop distance to every known peer.
+     * Self = depth 0, direct neighbours = depth 1, etc.
+     * Unreachable peers (graph islands) are omitted.
+     */
+    public Map<String, Integer> depthMap() {
+        Map<String, Integer> depths = new ConcurrentHashMap<>();
+        String selfHex = mSelf.toHex();
+        depths.put(selfHex, 0);
+        Queue<String> queue = new ArrayDeque<>();
+        queue.add(selfHex);
+        while (!queue.isEmpty()) {
+            String cur = queue.poll();
+            int d = depths.get(cur);
+            for (String n : mGraph.getOrDefault(cur, Collections.emptySet())) {
+                if (!depths.containsKey(n)) {
+                    depths.put(n, d + 1);
+                    queue.add(n);
+                }
+            }
+        }
+        return depths;
+    }
 }

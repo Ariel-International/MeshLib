@@ -82,7 +82,10 @@ public class MeshRouter {
     /** Called by {@link MeshLink.Listener#onClosed} — removes the link and updates topology. */
     public void onLinkClosed(MeshLink link, PeerId remotePeerId) {
         if (remotePeerId == null) return;
-        mLinks.remove(remotePeerId.toHex(), link);
+        // Only update topology if this is still the active link for this peer.
+        // A replacement link may have already been registered; in that case the
+        // closed link is a stale duplicate and topology stays intact.
+        if (!mLinks.remove(remotePeerId.toHex(), link)) return;
         mTopology.removeLink(remotePeerId);
         mLog.d("MESH", "L3: link down → " + remotePeerId);
         mFloodTopology(null);
@@ -152,6 +155,9 @@ public class MeshRouter {
     }
 
     public Set<String> allKnownPeerHexIds() { return mTopology.allPeers(); }
+
+    /** Returns hop depth from self to every known peer (self=0, direct=1, …). */
+    public java.util.Map<String, Integer> peerDepthMap() { return mTopology.depthMap(); }
 
     private PeerId mPeerForLink(MeshLink link) {
         for (Map.Entry<String, MeshLink> entry : mLinks.entrySet()) {

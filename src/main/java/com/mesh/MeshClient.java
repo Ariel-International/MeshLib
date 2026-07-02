@@ -3,6 +3,8 @@ package com.mesh;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * L1/L2 client side — runs {@link MeshFinder} on a periodic loop and
@@ -48,6 +50,9 @@ public class MeshClient {
     private Thread           mScanThread;
     private volatile boolean mRunning = false;
 
+    // IPs currently being connected or already linked — prevents duplicate dials
+    private final Set<String> mConnecting = ConcurrentHashMap.newKeySet();
+
     public MeshClient(MeshConfig config, Listener listener) {
         mConfig   = config;
         mListener = listener;
@@ -80,6 +85,10 @@ public class MeshClient {
     }
 
     private void mScanLoop() {
+        // Aggressive startup: immediate → 5s → then settle into periodic interval
+        long[] startupDelays = { 0, 5_000 };
+        int startupIdx = 0;
+
         while (mRunning) {
             mFinder = new MeshFinder(mConfig);
             mFinder.setLogger(mLog);
@@ -92,7 +101,12 @@ public class MeshClient {
                 }
             });
             if (!mRunning) break;
-            try { Thread.sleep(mConfig.rescanIntervalMs); } catch (InterruptedException ignored) {}
+            long delay = startupIdx < startupDelays.length
+                    ? startupDelays[startupIdx++]
+                    : mConfig.rescanIntervalMs;
+            if (delay > 0) {
+                try { Thread.sleep(delay); } catch (InterruptedException ignored) {}
+            }
         }
     }
 
@@ -107,20 +121,38 @@ public class MeshClient {
      */
     public void connect(InetAddress address, PeerIdentity selfIdentity,
                         MeshLink.Listener listener) {
+        String ip = address.getHostAddress();
+        if (!mConnecting.add(ip)) {
+            mLog.d("NET", "L2 skip " + ip + " — already connecting/connected");
+            return;
+        }
         new Thread(() -> {
             try {
                 Socket socket = new Socket();
                 bindSocket(socket);
                 socket.connect(new InetSocketAddress(address, mConfig.port),
                         mConfig.gatewayTimeoutMs);
-                MeshLink link = new MeshLink(socket, selfIdentity, true, mConfig.appId, listener);
+                MeshLink link = new MeshLink(socket, selfIdentity, true, mConfig.appId,
+                        new MeshLink.Listener() {
+                            @Override public void onReady(MeshLink l, PeerId remote) {
+                                listener.onReady(l, remote);
+                            }
+                            @Override public void onMessage(MeshLink l, org.json.JSONObject j) {
+                                listener.onMessage(l, j);
+                            }
+                            @Override public void onClosed(MeshLink l, String reason) {
+                                mConnecting.remove(ip);
+                                listener.onClosed(l, reason);
+                            }
+                        });
                 link.setLogger(mLog);
                 link.start();
             } catch (Exception e) {
-                mLog.e("NET", "L2 connect to " + address.getHostAddress() + " failed: " + e.getMessage());
+                mConnecting.remove(ip);
+                mLog.e("NET", "L2 connect to " + ip + " failed: " + e.getMessage());
                 try { listener.onClosed(null, e.getMessage()); } catch (Exception ignored) {}
             }
-        }, "mesh-l2-connect-" + address.getHostAddress()).start();
+        }, "mesh-l2-connect-" + ip).start();
     }
 
     /**

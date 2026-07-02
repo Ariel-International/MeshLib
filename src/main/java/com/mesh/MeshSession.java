@@ -24,11 +24,11 @@ public class MeshSession {
     private static final String T_LEAVE    = "session_leave";
     private static final String T_PRESENCE = "session_presence";
 
-    static class SessionState {
-        final String id;
-        String name;
-        boolean isPublic;
-        final Map<String, String> members = new LinkedHashMap<>();
+    public static class SessionState {
+        public final String id;
+        public String name;
+        public boolean isPublic;
+        public final Map<String, String> members = new LinkedHashMap<>();
 
         SessionState(String id, String name, boolean isPublic) {
             this.id = id; this.name = name; this.isPublic = isPublic;
@@ -78,6 +78,13 @@ public class MeshSession {
         mFloodLeave(leaving);
     }
 
+    /** Re-flood all active session announcements — call when a new link comes up. */
+    public void reannounce() {
+        for (SessionState s : mSessions.values()) {
+            if (s.members.containsKey(mSelf.toHex())) mFloodAnnounce(s);
+        }
+    }
+
     public void announcePresence(boolean online) {
         if (mActiveSessionId == null) return;
         try {
@@ -121,10 +128,16 @@ public class MeshSession {
     private void mHandleJoin(PeerId from, JSONObject p) {
         try {
             String id = p.getString("session");
-            SessionState s = mSessions.get(id);
-            if (s == null) return;
-            s.members.put(from.toHex(), p.optString("nickname", ""));
+            String nick = p.optString("nickname", "");
+            SessionState s = mSessions.computeIfAbsent(id,
+                    k -> new SessionState(id, id, true));
+            s.members.put(from.toHex(), nick);
             mListener.onSessionUpdated(id, s.name, Collections.unmodifiableMap(s.members));
+            // Re-announce so the joiner learns our session name and existing members.
+            if (mSessions.containsKey(id) && mActiveSessionId != null
+                    && mActiveSessionId.equals(id)) {
+                mFloodAnnounce(s);
+            }
         } catch (Exception e) { mLog.e("MESH", "L4 join: " + e.getMessage()); }
     }
 

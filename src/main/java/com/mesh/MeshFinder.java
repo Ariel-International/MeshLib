@@ -97,44 +97,62 @@ public class MeshFinder {
     // -------------------------------------------------------------------------
 
     /**
-     * Probes the gateway and then sweeps the /24 on the configured port.
-     * Blocks until complete — call from a background thread.
+     * Probes the gateway and sweeps the /24 on every eligible LAN interface
+     * in parallel. All results feed the same listener.
+     * Blocks until all subnets are complete — call from a background thread.
      */
     public void start(Listener listener) {
         mCancelled = false;
 
-        String localIp   = mLanInterfaceIp();
-        String gatewayIp = mRouteGateway();
-
-        if (gatewayIp == null && localIp != null) {
-            int dot = localIp.lastIndexOf('.');
-            gatewayIp = localIp.substring(0, dot + 1) + "1";
-            mLog.d("NET", "L1 fallback: local=" + localIp + " gw=" + gatewayIp);
-        } else if (gatewayIp != null) {
-            mLog.d("NET", "L1 route: local=" + localIp + " gw=" + gatewayIp);
-        }
-
-        if (gatewayIp == null) {
+        List<String> localIps = MeshServer.mLanInterfaceIps();
+        if (localIps.isEmpty()) {
             mLog.d("NET", "L1 scan: no suitable interface found");
             listener.onScanComplete();
             return;
         }
 
-        final String subnet = gatewayIp.substring(0, gatewayIp.lastIndexOf('.') + 1);
-        final String gwIp   = gatewayIp;
-        final String selfIp = localIp;
-
+        String routeGw = mRouteGateway();
         ExecutorService pool = Executors.newFixedThreadPool(SWEEP_THREADS);
         try {
-            if (mProbe(gwIp, mConfig.port, mConfig.gatewayTimeoutMs))
-                listener.onPeerFound(InetAddress.getByName(gwIp), true);
-            if (mCancelled) return;
+            List<Future<?>> futures = new ArrayList<>();
+            for (String localIp : localIps) {
+                // Derive gateway: use route table if it's on this subnet, else .1
+                String prefix = localIp.substring(0, localIp.lastIndexOf('.') + 1);
+                String gwIp = (routeGw != null && routeGw.startsWith(prefix))
+                        ? routeGw : prefix + "1";
+                mLog.d("NET", "L1 scan subnet=" + prefix + "0/24 gw=" + gwIp
+                        + " local=" + localIp);
+                futures.add(pool.submit(() -> mSweepSubnet(prefix, gwIp, localIp, listener)));
+            }
+            for (Future<?> f : futures) {
+                if (mCancelled) break;
+                try { f.get(); } catch (Exception ignored) {}
+            }
+        } finally {
+            pool.shutdownNow();
+            try { pool.awaitTermination(1, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+            listener.onScanComplete();
+        }
+    }
 
+    private void mSweepSubnet(String prefix, String gwIp, String selfIp, Listener listener) {
+        // Probe gateway first with longer timeout
+        if (!mCancelled) {
+            try {
+                if (mProbe(gwIp, mConfig.port, mConfig.gatewayTimeoutMs))
+                    listener.onPeerFound(InetAddress.getByName(gwIp), true);
+            } catch (Exception ignored) {}
+        }
+
+        // Sweep rest of /24 in parallel using the shared pool's caller thread
+        // — submit sub-tasks inline so we don't nest pools
+        ExecutorService sweep = Executors.newFixedThreadPool(SWEEP_THREADS);
+        try {
             List<Future<?>> futures = new ArrayList<>();
             for (int host = 1; host < 255; host++) {
-                final String ip = subnet + host;
+                final String ip = prefix + host;
                 if (ip.equals(gwIp) || ip.equals(selfIp)) continue;
-                futures.add(pool.submit(() -> {
+                futures.add(sweep.submit(() -> {
                     if (mCancelled) return;
                     try {
                         if (mProbe(ip, mConfig.port, mConfig.sweepTimeoutMs))
@@ -146,12 +164,9 @@ public class MeshFinder {
                 if (mCancelled) break;
                 try { f.get(); } catch (Exception ignored) {}
             }
-        } catch (Exception e) {
-            mLog.e("MESH", "L1 scan failed: " + e.getMessage());
         } finally {
-            pool.shutdownNow();
-            try { pool.awaitTermination(1, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
-            listener.onScanComplete();
+            sweep.shutdownNow();
+            try { sweep.awaitTermination(1, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
         }
     }
 
