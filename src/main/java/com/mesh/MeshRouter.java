@@ -85,7 +85,9 @@ public class MeshRouter {
         // Only update topology if this is still the active link for this peer.
         // A replacement link may have already been registered; in that case the
         // closed link is a stale duplicate and topology stays intact.
-        if (!mLinks.remove(remotePeerId.toHex(), link)) return;
+        // Map.remove(key,value) is API 24+; target runs API 23 — equals-guarded.
+        if (!link.equals(mLinks.get(remotePeerId.toHex()))) return;
+        mLinks.remove(remotePeerId.toHex());
         mTopology.removeLink(remotePeerId);
         mLog.d("MESH", "L3: link down → " + remotePeerId);
         mFloodTopology(null);

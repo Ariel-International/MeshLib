@@ -6,7 +6,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.net.Socket;
 import java.security.SecureRandom;
-import java.util.Base64;
+
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -106,7 +106,7 @@ public class MeshLink {
     private boolean mHandshake() throws Exception {
         byte[] nonceBytes = new byte[16];
         new SecureRandom().nextBytes(nonceBytes);
-        String ourNonce = Base64.getEncoder().encodeToString(nonceBytes);
+        String ourNonce = MeshBase64.encode(nonceBytes);
 
         JSONObject hello = new JSONObject();
         hello.put("type",   "hello");
@@ -133,12 +133,12 @@ public class MeshLink {
 
         JSONObject proof = new JSONObject();
         proof.put("type",      "proof");
-        proof.put("signature", Base64.getEncoder().encodeToString(sig));
+        proof.put("signature", MeshBase64.encode(sig));
         MeshFrame.write(mOut, proof);
 
         JSONObject theirProof = MeshFrame.read(mIn);
         if (!"proof".equals(theirProof.optString("type"))) return false;
-        byte[] theirSig = Base64.getDecoder().decode(theirProof.getString("signature"));
+        byte[] theirSig = MeshBase64.decode(theirProof.getString("signature"));
 
         if (!PeerIdentity.verify(claimedPeer, ourNonce.getBytes("UTF-8"), theirSig)) {
             mLog.e("MESH", "L2 handshake: signature verify failed for " + claimedPeer);

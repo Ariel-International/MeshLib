@@ -36,8 +36,8 @@ public class MeshTopology {
 
     /** Records a new direct link to {@code remote} in the local adjacency list. */
     public void addLink(PeerId remote) {
-        mGraph.computeIfAbsent(mSelf.toHex(),   k -> ConcurrentHashMap.newKeySet()).add(remote.toHex());
-        mGraph.computeIfAbsent(remote.toHex(), k -> ConcurrentHashMap.newKeySet()).add(mSelf.toHex());
+        mComputeIfAbsent(mGraph, mSelf.toHex()).add(remote.toHex());
+        mComputeIfAbsent(mGraph, remote.toHex()).add(mSelf.toHex());
     }
 
     /** Removes a direct link to {@code remote} from the local adjacency list. */
@@ -60,7 +60,7 @@ public class MeshTopology {
             Set<String> incoming = new HashSet<>();
             for (int i = 0; i < neighbors.length(); i++) incoming.add(neighbors.getString(i));
 
-            Set<String> existing = mGraph.computeIfAbsent(peer, k -> ConcurrentHashMap.newKeySet());
+            Set<String> existing = mComputeIfAbsent(mGraph, peer);
             if (existing.equals(incoming)) return false;
             existing.clear();
             existing.addAll(incoming);
@@ -80,7 +80,8 @@ public class MeshTopology {
             frame.put("type", "topology");
             frame.put("peer", mSelf.toHex());
             JSONArray arr = new JSONArray();
-            for (String n : mGraph.getOrDefault(mSelf.toHex(), Collections.emptySet())) arr.put(n);
+            Set<String> neighbors = mGraph.containsKey(mSelf.toHex()) ? mGraph.get(mSelf.toHex()) : Collections.<String>emptySet();
+            for (String n : neighbors) arr.put(n);
             frame.put("neighbors", arr);
             return frame;
         } catch (Exception e) {
@@ -102,7 +103,7 @@ public class MeshTopology {
         Set<String>     visited = new HashSet<>();
         Queue<String[]> queue   = new ArrayDeque<>();
         visited.add(selfHex);
-        for (String n : mGraph.getOrDefault(selfHex, Collections.emptySet()))
+        for (String n : mGetOrEmpty(mGraph, selfHex))
             queue.add(new String[]{n, n}); // {current, first-hop}
 
         while (!queue.isEmpty()) {
@@ -111,10 +112,21 @@ public class MeshTopology {
             if (visited.contains(cur)) continue;
             visited.add(cur);
             if (cur.equals(targetHex)) return via;
-            for (String n : mGraph.getOrDefault(cur, Collections.emptySet()))
+            for (String n : mGetOrEmpty(mGraph, cur))
                 if (!visited.contains(n)) queue.add(new String[]{n, via});
         }
         return null;
+    }
+
+    private static Set<String> mGetOrEmpty(Map<String, Set<String>> map, String key) {
+        Set<String> v = map.get(key);
+        return v != null ? v : Collections.<String>emptySet();
+    }
+
+    private static Set<String> mComputeIfAbsent(Map<String, Set<String>> map, String key) {
+        Set<String> v = map.get(key);
+        if (v == null) { v = ConcurrentHashMap.newKeySet(); map.put(key, v); }
+        return v;
     }
 
     /** Returns an unmodifiable view of all known peer hex IDs (including self). */
@@ -136,7 +148,7 @@ public class MeshTopology {
         while (!queue.isEmpty()) {
             String cur = queue.poll();
             int d = depths.get(cur);
-            for (String n : mGraph.getOrDefault(cur, Collections.emptySet())) {
+            for (String n : mGetOrEmpty(mGraph, cur)) {
                 if (!depths.containsKey(n)) {
                     depths.put(n, d + 1);
                     queue.add(n);

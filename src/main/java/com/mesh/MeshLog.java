@@ -106,8 +106,8 @@ public class MeshLog {
             payload.put("type", "sync_summary");
             payload.put("session", sessionId);
             JSONObject seqs = new JSONObject();
-            for (Map.Entry<String, Long> e :
-                    mSeenSeqs.getOrDefault(sessionId, Collections.emptyMap()).entrySet())
+            Map<String, Long> seqMap = mSeenSeqs.containsKey(sessionId) ? mSeenSeqs.get(sessionId) : Collections.<String, Long>emptyMap();
+            for (Map.Entry<String, Long> e : seqMap.entrySet())
                 seqs.put(e.getKey(), e.getValue());
             payload.put("seqs", seqs);
             link.send(mWrap(payload));
@@ -144,7 +144,7 @@ public class MeshLog {
         String text     = p.getString("text");
         long   ts       = p.optLong("ts", System.currentTimeMillis());
 
-        Map<String, Long> seen = mSeenSeqs.computeIfAbsent(session, k -> new ConcurrentHashMap<>());
+        Map<String, Long> seen = mComputeIfAbsentSeqs(mSeenSeqs, session);
         Long lastSeen = seen.get(sender);
         if (lastSeen != null && seq <= lastSeen) return;
         seen.put(sender, Math.max(seq, lastSeen != null ? lastSeen : -1));
@@ -156,7 +156,7 @@ public class MeshLog {
     private void mHandleSyncSummary(PeerId from, JSONObject p) throws Exception {
         String session = p.getString("session");
         JSONObject theirSeqs = p.getJSONObject("seqs");
-        List<Msg> log = mMessages.getOrDefault(session, Collections.emptyList());
+        List<Msg> log = mMessages.containsKey(session) ? mMessages.get(session) : Collections.<Msg>emptyList();
         JSONArray replay = new JSONArray();
         for (Msg msg : log) {
             if (msg.seq > theirSeqs.optLong(msg.senderHex, -1)) {
@@ -188,10 +188,23 @@ public class MeshLog {
     }
 
     private void mStore(String sessionId, Msg msg) {
-        List<Msg> list = mMessages.computeIfAbsent(sessionId, k -> new ArrayList<>());
+        List<Msg> list = mComputeIfAbsentMsgs(mMessages, sessionId);
         list.add(msg);
-        list.sort((a, b) -> Long.compare(a.timestampMs, b.timestampMs));
+        // Collections.sort (API 1), not List.sort (API 24+) — target runs on API 23.
+        java.util.Collections.sort(list, (a, b) -> Long.compare(a.timestampMs, b.timestampMs));
         while (list.size() > MAX_MESSAGES) list.remove(0);
+    }
+
+    private static Map<String, Long> mComputeIfAbsentSeqs(Map<String, Map<String, Long>> map, String key) {
+        Map<String, Long> v = map.get(key);
+        if (v == null) { v = new ConcurrentHashMap<>(); map.put(key, v); }
+        return v;
+    }
+
+    private static List<Msg> mComputeIfAbsentMsgs(Map<String, List<Msg>> map, String key) {
+        List<Msg> v = map.get(key);
+        if (v == null) { v = new ArrayList<>(); map.put(key, v); }
+        return v;
     }
 
     private static JSONObject mWrap(JSONObject payload) throws Exception {

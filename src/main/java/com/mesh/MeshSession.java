@@ -62,8 +62,7 @@ public class MeshSession {
     }
 
     public void join(String sessionId) {
-        SessionState s = mSessions.computeIfAbsent(sessionId,
-                k -> new SessionState(sessionId, sessionId, true));
+        SessionState s = mComputeIfAbsent(mSessions, sessionId, new SessionState(sessionId, sessionId, true));
         s.members.put(mSelf.toHex(), mNickname);
         mActiveSessionId = sessionId;
         mFloodJoin(sessionId);
@@ -118,7 +117,7 @@ public class MeshSession {
             String id = p.getString("session");
             String name = p.optString("name", id);
             boolean pub = p.optBoolean("public", true);
-            SessionState s = mSessions.computeIfAbsent(id, k -> new SessionState(id, name, pub));
+            SessionState s = mComputeIfAbsent(mSessions, id, new SessionState(id, name, pub));
             s.name = name; s.isPublic = pub;
             s.members.put(from.toHex(), p.optString("nickname", ""));
             mListener.onSessionUpdated(id, name, Collections.unmodifiableMap(s.members));
@@ -129,8 +128,7 @@ public class MeshSession {
         try {
             String id = p.getString("session");
             String nick = p.optString("nickname", "");
-            SessionState s = mSessions.computeIfAbsent(id,
-                    k -> new SessionState(id, id, true));
+            SessionState s = mComputeIfAbsent(mSessions, id, new SessionState(id, id, true));
             s.members.put(from.toHex(), nick);
             mListener.onSessionUpdated(id, s.name, Collections.unmodifiableMap(s.members));
             // Re-announce so the joiner learns our session name and existing members.
@@ -195,6 +193,12 @@ public class MeshSession {
             p.put("peerId", mSelf.toHex());
             mRouter.floodAll(mWrap(p));
         } catch (Exception e) { mLog.e("MESH", "L4 leave flood: " + e.getMessage()); }
+    }
+
+    private static SessionState mComputeIfAbsent(Map<String, SessionState> map, String key, SessionState defaultVal) {
+        SessionState v = map.get(key);
+        if (v == null) { map.put(key, defaultVal); return defaultVal; }
+        return v;
     }
 
     private static JSONObject mWrap(JSONObject payload) throws Exception {
