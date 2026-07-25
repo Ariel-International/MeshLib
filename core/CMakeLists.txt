@@ -111,17 +111,24 @@ if(MESHCORE_BUILD_TESTS)
     target_link_libraries(test_identity PRIVATE meshcore)
     add_test(NAME identity COMMAND test_identity)
 
-    # On Windows the OpenSSL crypto DLL must sit next to the test exe (or on
-    # PATH) at run time. When we know the OpenSSL root, copy it into the test's
-    # output dir after build so `ctest` runs without any PATH setup. No-op on
-    # platforms/configs where the DLL isn't found.
+    # L2 framing + handshake. Also pulls OpenSSL in transitively via meshcore.
+    add_executable(test_link tests/test_link.c)
+    target_link_libraries(test_link PRIVATE meshcore)
+    add_test(NAME link COMMAND test_link)
+
+    # On Windows the OpenSSL crypto DLL must sit next to any exe that pulls it in
+    # (or be on PATH) at run time. When we know the OpenSSL root, copy it into
+    # each test's output dir after build so `ctest` runs without PATH setup.
+    # No-op on platforms/configs where the DLL isn't found.
     if(WIN32 AND OPENSSL_ROOT_DIR)
         foreach(_dll "libcrypto-3-x64.dll" "libcrypto-1_1-x64.dll")
             if(EXISTS "${OPENSSL_ROOT_DIR}/bin/${_dll}")
-                add_custom_command(TARGET test_identity POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${OPENSSL_ROOT_DIR}/bin/${_dll}"
-                        "$<TARGET_FILE_DIR:test_identity>")
+                foreach(_tgt test_identity test_link)
+                    add_custom_command(TARGET ${_tgt} POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "${OPENSSL_ROOT_DIR}/bin/${_dll}"
+                            "$<TARGET_FILE_DIR:${_tgt}>")
+                endforeach()
             endif()
         endforeach()
     endif()
