@@ -65,10 +65,25 @@ else()
     target_compile_options(meshcore PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-# Crypto backend: NOT linked yet. When mesh_identity.c gets real ECDSA, desktop
-# will link OpenSSL here (find_package(OpenSSL); target_link_libraries(meshcore
-# PRIVATE OpenSSL::Crypto)); ESP-IDF resolves mbedTLS via its component system
-# instead. Left unlinked so the skeleton has zero external dependencies.
+# ---------------------------------------------------------------------------
+# Crypto backend (desktop): OpenSSL. mesh_identity.c uses the EVP API for the
+# P-256 keypair, X.509 PeerId, and SHA256withECDSA sign/verify.
+#
+# ESP-IDF resolves mbedTLS via its component system instead (idf_component_
+# register(... REQUIRES mbedtls)); that path is not wired here — see the
+# ESP-IDF note above.
+#
+# On this machine the only MSVC-compatible OpenSSL dev install is the one
+# bundled with PostgreSQL 18. If find_package can't locate OpenSSL on its own,
+# pass -DOPENSSL_ROOT_DIR=... (or set it in the environment). We seed a default
+# hint here so a plain `cmake -S . -B build` configures out of the box, without
+# hard-failing on machines where OpenSSL lives elsewhere.
+if(NOT DEFINED OPENSSL_ROOT_DIR AND EXISTS "C:/Program Files/PostgreSQL/18/include/openssl/evp.h")
+    set(OPENSSL_ROOT_DIR "C:/Program Files/PostgreSQL/18")
+endif()
+find_package(OpenSSL REQUIRED)
+target_link_libraries(meshcore PRIVATE OpenSSL::Crypto)
+# ---------------------------------------------------------------------------
 
 set_target_properties(meshcore PROPERTIES
     PUBLIC_HEADER "${MESHCORE_HEADERS}")
@@ -89,4 +104,25 @@ if(MESHCORE_BUILD_TESTS)
     add_executable(test_codec tests/test_codec.c)
     target_link_libraries(test_codec PRIVATE meshcore)
     add_test(NAME codec COMMAND test_codec)
+
+    # Identity tests link OpenSSL transitively through meshcore (PRIVATE), but
+    # the test source itself only calls the mesh_identity public API.
+    add_executable(test_identity tests/test_identity.c)
+    target_link_libraries(test_identity PRIVATE meshcore)
+    add_test(NAME identity COMMAND test_identity)
+
+    # On Windows the OpenSSL crypto DLL must sit next to the test exe (or on
+    # PATH) at run time. When we know the OpenSSL root, copy it into the test's
+    # output dir after build so `ctest` runs without any PATH setup. No-op on
+    # platforms/configs where the DLL isn't found.
+    if(WIN32 AND OPENSSL_ROOT_DIR)
+        foreach(_dll "libcrypto-3-x64.dll" "libcrypto-1_1-x64.dll")
+            if(EXISTS "${OPENSSL_ROOT_DIR}/bin/${_dll}")
+                add_custom_command(TARGET test_identity POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${OPENSSL_ROOT_DIR}/bin/${_dll}"
+                        "$<TARGET_FILE_DIR:test_identity>")
+            endif()
+        endforeach()
+    endif()
 endif()
