@@ -116,6 +116,12 @@ if(MESHCORE_BUILD_TESTS)
     target_link_libraries(test_link PRIVATE meshcore)
     add_test(NAME link COMMAND test_link)
 
+    # L3 topology + routing. Pure graph/JSON logic — no crypto of its own, but
+    # it still links meshcore, which pulls OpenSSL in transitively.
+    add_executable(test_router tests/test_router.c)
+    target_link_libraries(test_router PRIVATE meshcore)
+    add_test(NAME router COMMAND test_router)
+
     # On Windows the OpenSSL crypto DLL must sit next to any exe that pulls it in
     # (or be on PATH) at run time. When we know the OpenSSL root, copy it into
     # each test's output dir after build so `ctest` runs without PATH setup.
@@ -123,7 +129,7 @@ if(MESHCORE_BUILD_TESTS)
     if(WIN32 AND OPENSSL_ROOT_DIR)
         foreach(_dll "libcrypto-3-x64.dll" "libcrypto-1_1-x64.dll")
             if(EXISTS "${OPENSSL_ROOT_DIR}/bin/${_dll}")
-                foreach(_tgt test_identity test_link)
+                foreach(_tgt test_identity test_link test_router)
                     add_custom_command(TARGET ${_tgt} POST_BUILD
                         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                             "${OPENSSL_ROOT_DIR}/bin/${_dll}"
