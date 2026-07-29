@@ -140,8 +140,23 @@ public class MeshServer {
      * interfaces first, then wlan/eth, then anything else non-loopback.
      */
     public static List<String> mLanInterfaceIps() {
-        List<String> hotspot = new ArrayList<>();
-        List<String> wlan    = new ArrayList<>();
+        List<String> result = new ArrayList<>();
+        for (LanSubnet s : mLanSubnets()) result.add(s.ip);
+        return result;
+    }
+
+    /**
+     * Returns all eligible LAN interfaces with their real network prefix
+     * length, hotspot interfaces first, then wlan/eth.
+     *
+     * <p>Discovery needs the mask, not just the address: assuming {@code /24}
+     * makes {@link MeshFinder} skip peers that are reachable but outside the
+     * assumed range (e.g. two hosts in different third octets of a {@code /16}).
+     * Reads the prefix from {@link java.net.InterfaceAddress} (API 9).
+     */
+    public static List<LanSubnet> mLanSubnets() {
+        List<LanSubnet> hotspot = new ArrayList<>();
+        List<LanSubnet> wlan    = new ArrayList<>();
         try {
             Enumeration<NetworkInterface> ifaces = NetworkInterface.getNetworkInterfaces();
             while (ifaces.hasMoreElements()) {
@@ -154,18 +169,21 @@ public class MeshServer {
                         || name.startsWith("lan") || name.startsWith("usb")
                         || name.startsWith("rndis") || name.startsWith("br");
                 if (!isHotspot && !isLan) continue;
-                Enumeration<InetAddress> addrs = iface.getInetAddresses();
-                while (addrs.hasMoreElements()) {
-                    InetAddress addr = addrs.nextElement();
+                for (java.net.InterfaceAddress ia : iface.getInterfaceAddresses()) {
+                    InetAddress addr = ia.getAddress();
                     if (!(addr instanceof Inet4Address) || addr.isLoopbackAddress()) continue;
-                    String ip = addr.getHostAddress();
-                    if (isHotspot) hotspot.add(ip);
-                    else           wlan.add(ip);
+                    int prefix = ia.getNetworkPrefixLength();
+                    // Some Android builds report 0 or a nonsense prefix; fall
+                    // back to /24 rather than treating the whole space as local.
+                    if (prefix <= 0 || prefix > 32) prefix = 24;
+                    LanSubnet sub = new LanSubnet(addr.getHostAddress(), prefix, isHotspot);
+                    if (isHotspot) hotspot.add(sub);
+                    else           wlan.add(sub);
                 }
             }
         } catch (Exception ignored) {}
 
-        List<String> result = new ArrayList<>();
+        List<LanSubnet> result = new ArrayList<>();
         result.addAll(hotspot);
         result.addAll(wlan);
         return result;

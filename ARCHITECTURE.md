@@ -96,12 +96,20 @@ traffic between subnets naturally.
 
 ### Local (L1 — MeshFinder)
 
-1. Enumerate all mesh interfaces (whitelist above).
-2. Per interface: probe gateway first (longer timeout), then sweep /24
-   in parallel (32 threads, 300ms timeout each).
-3. `onPeerFound` fires for each host responding on the mesh port.
-4. `MeshClient.connect()` initiates L2 handshake.
-5. Already-connected peers are skipped (dedup by PeerId).
+1. Enumerate all mesh interfaces (whitelist above), reading each one's real
+   IPv4 prefix length from `InterfaceAddress` into a `LanSubnet`.
+2. Per interface: probe gateway first (longer timeout), then sweep the
+   subnet's actual host range in parallel (32 threads, 300ms timeout each).
+   The range comes from the netmask — assuming /24 silently skips reachable
+   peers on wider networks (two hosts in different third octets of a /16
+   never probe each other, and the scan reports an empty list with no error).
+3. Subnets wider than `MeshFinder.MAX_SWEEP_PREFIX` (/22, 1022 hosts) are not
+   swept — a /16 is 65534 probes and a /8 is 16.7M. These fire
+   `onSubnetTooLarge` so the UI can explain the empty list instead of
+   appearing to find nothing. Narrower subnets (/25 and below) sweep normally.
+4. `onPeerFound` fires for each host responding on the mesh port.
+5. `MeshClient.connect()` initiates L2 handshake.
+6. Already-connected peers are skipped (dedup by PeerId).
 
 Scan schedule:
 - Immediate on network-on.

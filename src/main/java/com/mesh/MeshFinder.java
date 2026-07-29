@@ -15,7 +15,13 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 /**
- * L1 Discovery — scans the local /24 subnet for responsive hosts.
+ * L1 Discovery — scans the local subnet for responsive hosts.
+ *
+ * <p>The scan range is derived from each interface's real netmask (see
+ * {@link LanSubnet}), not an assumed {@code /24}. Subnets wider than
+ * {@link #MAX_SWEEP_PREFIX} are reported as unscannable rather than
+ * partially scanned, so a wide network fails loudly instead of returning
+ * an empty peer list.
  *
  * <p>Two scan modes:
  * <ol>
@@ -58,6 +64,18 @@ public class MeshFinder {
          */
         void onPeerFound(InetAddress address, boolean isGateway);
 
+        /**
+         * A LAN interface was skipped because its subnet is too wide to sweep
+         * (prefix narrower than {@link #MAX_SWEEP_PREFIX}). Peers on that
+         * interface will not be discovered — surface this to the user rather
+         * than showing an empty node list with no explanation.
+         *
+         * <p>Default is a no-op so existing listeners keep compiling.
+         *
+         * @param subnet the interface address and its real prefix length
+         */
+        default void onSubnetTooLarge(LanSubnet subnet) {}
+
         /** All probe futures have resolved — scan is complete. */
         void onScanComplete();
     }
@@ -81,6 +99,13 @@ public class MeshFinder {
 
     private static final int SWEEP_THREADS = 32;
 
+    /**
+     * Narrowest prefix this scanner will sweep: {@code /22} (1022 hosts).
+     * Anything wider is reported via {@link Listener#onSubnetTooLarge} instead
+     * of scanned — a {@code /16} is 65534 probes, and a {@code /8} is 16.7M.
+     */
+    public static final int MAX_SWEEP_PREFIX = 22;
+
     private final MeshConfig mConfig;
     private MeshLogger       mLog       = MeshLogger.DEFAULT;
     private volatile boolean mCancelled = false;
@@ -97,15 +122,21 @@ public class MeshFinder {
     // -------------------------------------------------------------------------
 
     /**
-     * Probes the gateway and sweeps the /24 on every eligible LAN interface
-     * in parallel. All results feed the same listener.
+     * Probes the gateway and sweeps every eligible LAN interface's real
+     * subnet in parallel. All results feed the same listener.
      * Blocks until all subnets are complete — call from a background thread.
+     *
+     * <p>The host range comes from the interface's actual netmask, not an
+     * assumed {@code /24}. Subnets wider than {@link #MAX_SWEEP_PREFIX} have
+     * too many hosts to probe in reasonable time; those report
+     * {@link Listener#onSubnetTooLarge} and are skipped rather than silently
+     * scanning a wrong (assumed-/24) range.
      */
     public void start(Listener listener) {
         mCancelled = false;
 
-        List<String> localIps = MeshServer.mLanInterfaceIps();
-        if (localIps.isEmpty()) {
+        List<LanSubnet> subnets = MeshServer.mLanSubnets();
+        if (subnets.isEmpty()) {
             mLog.d("NET", "L1 scan: no suitable interface found");
             listener.onScanComplete();
             return;
@@ -115,14 +146,21 @@ public class MeshFinder {
         ExecutorService pool = Executors.newFixedThreadPool(SWEEP_THREADS);
         try {
             List<Future<?>> futures = new ArrayList<>();
-            for (String localIp : localIps) {
-                // Derive gateway: use route table if it's on this subnet, else .1
-                String prefix = localIp.substring(0, localIp.lastIndexOf('.') + 1);
-                String gwIp = (routeGw != null && routeGw.startsWith(prefix))
-                        ? routeGw : prefix + "1";
-                mLog.d("NET", "L1 scan subnet=" + prefix + "0/24 gw=" + gwIp
-                        + " local=" + localIp);
-                futures.add(pool.submit(() -> mSweepSubnet(prefix, gwIp, localIp, listener)));
+            for (LanSubnet sub : subnets) {
+                if (sub.prefixLen < MAX_SWEEP_PREFIX) {
+                    mLog.w("NET", "L1 scan skipped: " + sub + " has " + sub.hostCount()
+                            + " hosts, wider than /" + MAX_SWEEP_PREFIX);
+                    listener.onSubnetTooLarge(sub);
+                    continue;
+                }
+                // Gateway: route-table entry if it falls inside this subnet, else base+1
+                String gwIp = (routeGw != null && sub.contains(routeGw))
+                        ? routeGw : LanSubnet.toIp(sub.networkBase() + 1);
+                mLog.d("NET", "L1 scan subnet=" + LanSubnet.toIp(sub.networkBase())
+                        + "/" + sub.prefixLen + " hosts=" + sub.hostCount()
+                        + " gw=" + gwIp + " local=" + sub.ip);
+                final String fGw = gwIp;
+                futures.add(pool.submit(() -> mSweepSubnet(sub, fGw, listener)));
             }
             for (Future<?> f : futures) {
                 if (mCancelled) break;
@@ -135,7 +173,7 @@ public class MeshFinder {
         }
     }
 
-    private void mSweepSubnet(String prefix, String gwIp, String selfIp, Listener listener) {
+    private void mSweepSubnet(LanSubnet sub, String gwIp, Listener listener) {
         // Probe gateway first with longer timeout
         if (!mCancelled) {
             try {
@@ -144,14 +182,16 @@ public class MeshFinder {
             } catch (Exception ignored) {}
         }
 
-        // Sweep rest of /24 in parallel using the shared pool's caller thread
+        // Sweep the real host range in parallel using a dedicated pool
         // — submit sub-tasks inline so we don't nest pools
+        long base  = sub.networkBase();
+        long count = sub.hostCount();
         ExecutorService sweep = Executors.newFixedThreadPool(SWEEP_THREADS);
         try {
             List<Future<?>> futures = new ArrayList<>();
-            for (int host = 1; host < 255; host++) {
-                final String ip = prefix + host;
-                if (ip.equals(gwIp) || ip.equals(selfIp)) continue;
+            for (long i = 1; i <= count; i++) {
+                final String ip = LanSubnet.toIp(base + i);
+                if (ip.equals(gwIp) || ip.equals(sub.ip)) continue;
                 futures.add(sweep.submit(() -> {
                     if (mCancelled) return;
                     try {
@@ -175,13 +215,16 @@ public class MeshFinder {
     // -------------------------------------------------------------------------
 
     /**
-     * Probes every host in the local /24 against every port in {@code ports}.
+     * Probes every host in the local subnet against every port in {@code ports}.
      * Reports any host+port combination that accepts a TCP connection,
      * regardless of whether it speaks the MeshLib protocol.
      *
      * <p>Useful for LAN monitoring: discover routers (port 80/443/22),
      * cameras, printers, IoT devices, or any other reachable service.
      * Pass {@link MeshPort#ALL} to scan all known mesh ports.
+     *
+     * <p>Range comes from the interface's real netmask. Returns immediately
+     * without scanning if the subnet is wider than {@link #MAX_SWEEP_PREFIX}.
      *
      * <p>Blocks until complete — call from a background thread.
      *
@@ -192,22 +235,24 @@ public class MeshFinder {
     public void scanPorts(int[] ports, int timeout, PortScanListener listener) {
         mCancelled = false;
 
-        String localIp = mLanInterfaceIp();
-        if (localIp == null) { listener.onScanComplete(); return; }
-
-        String gatewayIp = mRouteGateway();
-        if (gatewayIp == null) {
-            int dot = localIp.lastIndexOf('.');
-            gatewayIp = localIp.substring(0, dot + 1) + "1";
+        List<LanSubnet> subnets = MeshServer.mLanSubnets();
+        if (subnets.isEmpty()) { listener.onScanComplete(); return; }
+        LanSubnet sub = subnets.get(0);
+        if (sub.prefixLen < MAX_SWEEP_PREFIX) {
+            mLog.w("NET", "port scan skipped: " + sub + " too wide");
+            listener.onScanComplete();
+            return;
         }
-        final String subnet = gatewayIp.substring(0, gatewayIp.lastIndexOf('.') + 1);
-        final String selfIp = localIp;
+
+        final long base   = sub.networkBase();
+        final long count  = sub.hostCount();
+        final String selfIp = sub.ip;
 
         ExecutorService pool = Executors.newFixedThreadPool(SWEEP_THREADS);
         try {
             List<Future<?>> futures = new ArrayList<>();
-            for (int host = 1; host < 255; host++) {
-                final String ip = subnet + host;
+            for (long h = 1; h <= count; h++) {
+                final String ip = LanSubnet.toIp(base + h);
                 if (ip.equals(selfIp)) continue;
                 for (int port : ports) {
                     final int p = port;

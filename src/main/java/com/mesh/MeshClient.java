@@ -38,6 +38,15 @@ public class MeshClient {
          */
         void onPeerFound(InetAddress address, boolean isGateway);
 
+        /**
+         * A LAN interface was skipped because its subnet is too wide to sweep.
+         * No peers will be discovered on it. Surface this to the user — an
+         * unexplained empty node list is the failure this replaces.
+         *
+         * <p>Default is a no-op so existing listeners keep compiling.
+         */
+        default void onSubnetTooLarge(LanSubnet subnet) {}
+
         /** One full scan cycle completed. */
         void onScanComplete();
     }
@@ -95,6 +104,9 @@ public class MeshClient {
             mFinder.start(new MeshFinder.Listener() {
                 @Override public void onPeerFound(InetAddress address, boolean isGateway) {
                     if (mRunning) mListener.onPeerFound(address, isGateway);
+                }
+                @Override public void onSubnetTooLarge(LanSubnet subnet) {
+                    if (mRunning) mListener.onSubnetTooLarge(subnet);
                 }
                 @Override public void onScanComplete() {
                     if (mRunning) mListener.onScanComplete();
