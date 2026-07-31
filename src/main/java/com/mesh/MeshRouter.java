@@ -145,14 +145,23 @@ public class MeshRouter {
         }
     }
 
-    public void floodAll(JSONObject payload) {
+    /** Reports whether a {@link #floodAll} attempt reached at least one live link
+     *  — "handed off to the mesh," not a delivery/receipt confirmation (no such
+     *  signal exists at any layer). Fires once, from the flood thread. */
+    public interface FloodCallback { void onFlooded(boolean reachedAnyLink); }
+
+    public void floodAll(JSONObject payload) { floodAll(payload, null); }
+
+    public void floodAll(JSONObject payload, FloodCallback callback) {
         new Thread(() -> {
+            boolean reachedAny = false;
             for (MeshLink link : mLinks.values()) {
                 if (link.isClosed()) continue;
-                try { link.send(payload); } catch (Exception e) {
+                try { link.send(payload); reachedAny = true; } catch (Exception e) {
                     mLog.w("MESH", "L3 flood failed: " + e.getMessage());
                 }
             }
+            if (callback != null) callback.onFlooded(reachedAny);
         }, "mesh-flood").start();
     }
 

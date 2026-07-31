@@ -37,6 +37,12 @@ public class MeshLog {
     public interface Listener {
         void onMessage(String sessionId, String fromPeerIdHex,
                 String nickname, String text, long timestampMs);
+
+        /** A locally-sent message reached at least one live mesh link. This is
+         *  "handed off," not a delivery/read receipt — no peer-side ack exists
+         *  at any layer, so there is no further state beyond this one. Default
+         *  no-op keeps existing single-method lambda listeners compiling. */
+        default void onHandedOff(String sessionId, long seq) { }
     }
 
     private static final int MAX_MESSAGES = 500;
@@ -75,8 +81,11 @@ public class MeshLog {
      * Sends a chat message into a session. Stores it locally, fires the
      * listener immediately (for self-echo in the UI), and floods it to all
      * connected peers.
+     *
+     * @return the sequence number assigned to this message — pair with
+     *         {@link Listener#onHandedOff} to track its handed-off state.
      */
-    public void send(String sessionId, String nickname, String text) {
+    public long send(String sessionId, String nickname, String text) {
         long seq = mNextSeq++;
         long ts  = System.currentTimeMillis();
         Msg msg  = new Msg(mSelf.toHex(), seq, nickname, text, ts, sessionId);
@@ -91,8 +100,11 @@ public class MeshLog {
             payload.put("nickname", nickname);
             payload.put("text", text);
             payload.put("ts", ts);
-            mRouter.floodAll(mWrap(payload));
+            mRouter.floodAll(mWrap(payload), reachedAny -> {
+                if (reachedAny) mListener.onHandedOff(sessionId, seq);
+            });
         } catch (Exception e) { mLogger.e("MESH", "L5 send: " + e.getMessage()); }
+        return seq;
     }
 
     /**
