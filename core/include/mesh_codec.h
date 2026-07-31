@@ -6,8 +6,6 @@
  * are enumerated in WIRE_FORMAT.md "Encoding of binary fields"
  * (../../WIRE_FORMAT.md:47-121). Decoders reject malformed input with
  * MESH_ERR_MALFORMED — they never repair, skip, or truncate.
- *
- * SKELETON: signatures only; every function returns MESH_ERR_UNIMPLEMENTED.
  */
 #ifndef MESH_CODEC_H
 #define MESH_CODEC_H

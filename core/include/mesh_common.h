@@ -68,8 +68,7 @@ typedef struct mesh_bytes {
 /*
  * Owned, growable output buffer the core writes into. Caller initialises with
  * mesh_buf_init(), passes it to producing functions, and releases with
- * mesh_buf_free(). SKELETON: these two helpers are the only "utility" surface;
- * their bodies are still TODO.
+ * mesh_buf_free().
  */
 typedef struct mesh_buf {
     uint8_t *data;

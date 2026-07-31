@@ -4,8 +4,6 @@
  * C counterpart of the Java PeerIdentity + PeerId classes. WIRE_FORMAT.md
  * "L2 handshake" (../../WIRE_FORMAT.md:125-150) defines how these values cross
  * the wire; ARCHITECTURE.md line 11 defines the layer.
- *
- * SKELETON: signatures only; every function returns MESH_ERR_UNIMPLEMENTED.
  */
 #ifndef MESH_IDENTITY_H
 #define MESH_IDENTITY_H

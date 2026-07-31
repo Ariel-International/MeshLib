@@ -6,8 +6,6 @@
  * link change, and computes next hops by BFS. Route frames carry "from"/"to"
  * hex fields whose decode is strict but non-fatal (WIRE_FORMAT.md:119-121: a
  * malformed frame is dropped, the link stays up).
- *
- * SKELETON: signatures only; every function returns MESH_ERR_UNIMPLEMENTED.
  */
 #ifndef MESH_ROUTER_H
 #define MESH_ROUTER_H

@@ -9,8 +9,6 @@
  * and writes bytes; these functions only encode/decode/validate frames. (The
  * Java MeshLink additionally owns the socket, heartbeat thread, and timers —
  * intentionally NOT modelled here; see report/ambiguity notes.)
- *
- * SKELETON: signatures only; every function returns MESH_ERR_UNIMPLEMENTED.
  */
 #ifndef MESH_LINK_H
 #define MESH_LINK_H
