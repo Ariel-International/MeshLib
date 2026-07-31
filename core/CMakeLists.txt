@@ -122,6 +122,14 @@ if(MESHCORE_BUILD_TESTS)
     target_link_libraries(test_router PRIVATE meshcore)
     add_test(NAME router COMMAND test_router)
 
+    # Deterministic random-input hardening for the wire-facing entry points
+    # (L2 frame decode + handshake JSON, L3 topology/route JSON). Not
+    # coverage-guided fuzzing — no clang/libFuzzer/AFL toolchain is available
+    # on this machine — see the file header comment for what it does check.
+    add_executable(test_fuzz tests/test_fuzz.c)
+    target_link_libraries(test_fuzz PRIVATE meshcore)
+    add_test(NAME fuzz COMMAND test_fuzz)
+
     # On Windows the OpenSSL crypto DLL must sit next to any exe that pulls it in
     # (or be on PATH) at run time. When we know the OpenSSL root, copy it into
     # each test's output dir after build so `ctest` runs without PATH setup.
@@ -129,7 +137,7 @@ if(MESHCORE_BUILD_TESTS)
     if(WIN32 AND OPENSSL_ROOT_DIR)
         foreach(_dll "libcrypto-3-x64.dll" "libcrypto-1_1-x64.dll")
             if(EXISTS "${OPENSSL_ROOT_DIR}/bin/${_dll}")
-                foreach(_tgt test_identity test_link test_router)
+                foreach(_tgt test_identity test_link test_router test_fuzz)
                     add_custom_command(TARGET ${_tgt} POST_BUILD
                         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                             "${OPENSSL_ROOT_DIR}/bin/${_dll}"

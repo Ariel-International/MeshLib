@@ -7,8 +7,6 @@
  * ../../WIRE_FORMAT.md — that document, not this header, is the interop
  * contract. Every struct layout and function signature here exists to serve a
  * rule stated there.
- *
- * SKELETON: declarations only. No function in this core is implemented yet.
  */
 #ifndef MESH_COMMON_H
 #define MESH_COMMON_H
