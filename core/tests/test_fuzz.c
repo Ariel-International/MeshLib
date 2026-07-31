@@ -35,7 +35,9 @@
  *     subsequent well-formed call still works) — WIRE_FORMAT.md:119-121.
  *
  * Seeded with a fixed PRNG seed by default so failures are reproducible;
- * pass an explicit seed as argv[1] to explore further.
+ * pass an explicit seed as argv[1] to explore further. argv[2] (or the
+ * MESHCORE_FUZZ_MULTIPLIER env var) scales every loop's iteration count for
+ * long sweeps without slowing down the default `ctest` run.
  */
 #include "mesh_link.h"
 #include "mesh_identity.h"
@@ -81,6 +83,11 @@ static size_t rng_below(size_t n) {
 static void rng_fill(uint8_t *buf, size_t n) {
     for (size_t i = 0; i < n; i++) buf[i] = (uint8_t)(rng_next() & 0xFF);
 }
+
+/* Scales every loop's iteration count for long sweeps; 1 by default so the
+ * normal `ctest` run stays fast. */
+static int g_mult = 1;
+
 
 /* ===================================================================== */
 /*  L2 framing: mesh_frame_decode under truncation, lying lengths,       */
@@ -146,7 +153,8 @@ static void test_frame_decode_truncation(void) {
 static void test_frame_decode_lying_length(void) {
     printf("== fuzz: length prefix that lies (random values vs random buffer sizes) ==\n");
     rng_seed(0xF00D);
-    for (int iter = 0; iter < 20000; iter++) {
+    int n_lying = 20000 * g_mult;
+    for (int iter = 0; iter < n_lying; iter++) {
         size_t buflen = 4 + rng_below(64); /* prefix + up to 63 bytes of body */
         uint8_t *buf = (uint8_t *)malloc(buflen);
         CHECK(buf != NULL, "alloc fuzz buffer");
@@ -170,7 +178,7 @@ static void test_frame_decode_lying_length(void) {
 
         free(buf);
     }
-    printf("     20000 random (prefix,buffer) pairs checked\n");
+    printf("     %d random (prefix,buffer) pairs checked\n", n_lying);
 }
 
 static void test_frame_decode_concatenated_and_interleaved(void) {
@@ -236,7 +244,8 @@ static void test_handshake_garbage_input(void) {
 
     rng_seed(0xC0FFEE);
     int ok_never_seen = 1;
-    for (int iter = 0; iter < 5000; iter++) {
+    int n_hello = 5000 * g_mult;
+    for (int iter = 0; iter < n_hello; iter++) {
         size_t len = rng_below(256);
         uint8_t *buf = (uint8_t *)malloc(len ? len : 1);
         if (len) rng_fill(buf, len);
@@ -269,8 +278,8 @@ static void test_handshake_garbage_input(void) {
         free(buf);
         mesh_handshake_free(hs);
     }
-    CHECK(ok_never_seen, "5000 rounds of random/JSON-ish garbage never parsed as a valid hello");
-    printf("     5000 garbage hello payloads checked\n");
+    CHECK(ok_never_seen, "random/JSON-ish garbage never parsed as a valid hello");
+    printf("     %d garbage hello payloads checked\n", n_hello);
 
     /* Same drill for read_proof, reached via a real hello exchange so the
      * handshake is in PROOF_SENT (the only state read_proof accepts). */
@@ -278,7 +287,8 @@ static void test_handshake_garbage_input(void) {
     int proof_ok_never_seen = 1;
     mesh_identity_t *id2 = NULL;
     CHECK(mesh_identity_create(no_seed, &id2) == MESH_OK, "setup: second identity for proof fuzz");
-    for (int iter = 0; id2 && iter < 5000; iter++) {
+    int n_proof = 5000 * g_mult;
+    for (int iter = 0; id2 && iter < n_proof; iter++) {
         mesh_handshake_t *a = NULL, *b = NULL;
         mesh_handshake_begin(id, NULL, &a);
         mesh_handshake_begin(id2, NULL, &b);
@@ -310,8 +320,8 @@ static void test_handshake_garbage_input(void) {
         mesh_buf_free(&ah); mesh_buf_free(&bh); mesh_buf_free(&ap);
         mesh_handshake_free(a); mesh_handshake_free(b);
     }
-    CHECK(proof_ok_never_seen, "5000 rounds of random/JSON-ish garbage never parsed as a valid proof");
-    printf("     5000 garbage proof payloads checked\n");
+    CHECK(proof_ok_never_seen, "random/JSON-ish garbage never parsed as a valid proof");
+    printf("     %d garbage proof payloads checked\n", n_proof);
 
     mesh_identity_free(id);
     if (id2) mesh_identity_free(id2);
@@ -345,7 +355,8 @@ static void test_router_garbage_input(void) {
 
     rng_seed(0x5EED1);
     int topo_ok_never_seen = 0;
-    for (int iter = 0; iter < 8000; iter++) {
+    int n_topo = 8000 * g_mult;
+    for (int iter = 0; iter < n_topo; iter++) {
         size_t len = rng_below(300);
         uint8_t *buf = (uint8_t *)malloc(len ? len : 1);
         if (len) rng_fill(buf, len);
@@ -365,12 +376,13 @@ static void test_router_garbage_input(void) {
      * empty/trivial topology row (e.g. "{}" is only 2 bytes and could appear);
      * what matters is that it never crashes and the router stays usable —
      * checked below, not that OK is literally impossible. */
-    printf("     8000 garbage topology frames checked (%d spuriously well-formed)\n", topo_ok_never_seen);
+    printf("     %d garbage topology frames checked (%d spuriously well-formed)\n", n_topo, topo_ok_never_seen);
 
     rng_seed(0xFACE);
     int route_ok_never_seen = 0;
     int delivered_before = g_delivered;
-    for (int iter = 0; iter < 8000; iter++) {
+    int n_route = 8000 * g_mult;
+    for (int iter = 0; iter < n_route; iter++) {
         size_t len = rng_below(300);
         uint8_t *buf = (uint8_t *)malloc(len ? len : 1);
         if (len) rng_fill(buf, len);
@@ -388,10 +400,10 @@ static void test_router_garbage_input(void) {
     }
     CHECK(g_delivered == delivered_before,
           "garbage route frames never trigger a spurious delivery to the app layer");
-    printf("     8000 garbage route frames checked (%d spuriously well-formed)\n", route_ok_never_seen);
+    printf("     %d garbage route frames checked (%d spuriously well-formed)\n", n_route, route_ok_never_seen);
 
-    /* The router must still work normally after 16000 rounds of garbage —
-     * this is the actual "link stays up" property from WIRE_FORMAT.md:119-121
+    /* The router must still work normally after all that garbage — this is
+     * the actual "link stays up" property from WIRE_FORMAT.md:119-121
      * translated to the L3 API: the router handle is not corrupted. */
     int depth = -1;
     rc = mesh_router_depth(r, "aa", &depth);
@@ -405,7 +417,17 @@ static void test_router_garbage_input(void) {
 int main(int argc, char **argv) {
     uint64_t seed = 0xA11CE5EEDULL;
     if (argc > 1) seed = (uint64_t)strtoull(argv[1], NULL, 0);
-    printf("mesh core fuzz harness (seed=0x%llx)\n", (unsigned long long)seed);
+
+    if (argc > 2) {
+        g_mult = atoi(argv[2]);
+    } else {
+        const char *env = getenv("MESHCORE_FUZZ_MULTIPLIER");
+        if (env) g_mult = atoi(env);
+    }
+    if (g_mult < 1) g_mult = 1;
+
+    printf("mesh core fuzz harness (seed=0x%llx, multiplier=%d)\n",
+           (unsigned long long)seed, g_mult);
     rng_seed(seed);
 
     test_frame_decode_truncation();
