@@ -505,14 +505,33 @@ cleanup:
 }
 
 int main(void) {
+    /* Try a couple of CWD-relative guesses first (useful if the binary and
+     * fixture were copied somewhere together), then fall back to the
+     * absolute path CMake baked in at configure time. Relying on CWD alone
+     * is what broke this test: it passed from core/, but silently printed
+     * SKIP and exited 0 from core/build/ -- the working directory anyone
+     * actually runs the built binaries from. MESHCORE_FIXTURE_PATH removes
+     * the guessing instead of adding a third guess. */
     const char *path = "interop/fixture_java.json";
     if (!load_fixture(path)) {
         path = "tests/interop/fixture_java.json";
         if (!load_fixture(path)) {
-            printf("SKIP: no Java fixture found (looked for interop/fixture_java.json "
-                   "and tests/interop/fixture_java.json relative to CWD).\n"
+#ifdef MESHCORE_FIXTURE_PATH
+            path = MESHCORE_FIXTURE_PATH;
+            if (!load_fixture(path)) {
+                printf("SKIP: no Java fixture found (tried interop/fixture_java.json, "
+                       "tests/interop/fixture_java.json, and %s).\n"
+                       "Regenerate with: see core/tests/interop/FixtureGen.java header.\n",
+                       path);
+                return 77;
+            }
+#else
+            printf("SKIP: no Java fixture found (tried interop/fixture_java.json and "
+                   "tests/interop/fixture_java.json relative to CWD; MESHCORE_FIXTURE_PATH "
+                   "was not defined at compile time).\n"
                    "Regenerate with: see core/tests/interop/FixtureGen.java header.\n");
             return 77;
+#endif
         }
     }
     printf("cross-implementation interop test (fixture: %s)\n", path);

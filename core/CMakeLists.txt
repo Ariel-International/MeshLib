@@ -141,8 +141,14 @@ if(MESHCORE_BUILD_TESTS)
     # a hard requirement for `ctest` to pass on every desktop.
     add_executable(test_interop tests/test_interop.c)
     target_link_libraries(test_interop PRIVATE meshcore)
-    add_test(NAME interop COMMAND test_interop
-             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    # Bake the fixture's absolute path in at configure time so the test finds
+    # it regardless of the working directory it's run from (CWD-relative
+    # guesses alone meant it silently skipped -- reporting success while not
+    # running -- when launched from build/, which is where the built exe
+    # actually lives and where anyone would naturally run it from).
+    target_compile_definitions(test_interop PRIVATE
+        MESHCORE_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/interop/fixture_java.json")
+    add_test(NAME interop COMMAND test_interop)
     set_tests_properties(interop PROPERTIES SKIP_RETURN_CODE 77)
 
     # On Windows the OpenSSL crypto DLL must sit next to any exe that pulls it in
