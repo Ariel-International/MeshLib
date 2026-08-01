@@ -130,6 +130,21 @@ if(MESHCORE_BUILD_TESTS)
     target_link_libraries(test_fuzz PRIVATE meshcore)
     add_test(NAME fuzz COMMAND test_fuzz)
 
+    # Cross-implementation proof against the REAL Java com.mesh code: does a
+    # frame/signature/JSON field Java actually produced decode/verify
+    # correctly in the C core, and vice versa? See tests/test_interop.c's
+    # header for the full rationale and tests/interop/FixtureGen.java for how
+    # the fixture is regenerated (javac+java against the real Java sources;
+    # not part of this CMake build — Java stays out of the C build graph).
+    # Skips (does not fail) if the fixture file has not been generated on this
+    # machine, e.g. no JVM/Gradle cache — this is opt-in extra assurance, not
+    # a hard requirement for `ctest` to pass on every desktop.
+    add_executable(test_interop tests/test_interop.c)
+    target_link_libraries(test_interop PRIVATE meshcore)
+    add_test(NAME interop COMMAND test_interop
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    set_tests_properties(interop PROPERTIES SKIP_RETURN_CODE 77)
+
     # On Windows the OpenSSL crypto DLL must sit next to any exe that pulls it in
     # (or be on PATH) at run time. When we know the OpenSSL root, copy it into
     # each test's output dir after build so `ctest` runs without PATH setup.
@@ -137,7 +152,7 @@ if(MESHCORE_BUILD_TESTS)
     if(WIN32 AND OPENSSL_ROOT_DIR)
         foreach(_dll "libcrypto-3-x64.dll" "libcrypto-1_1-x64.dll")
             if(EXISTS "${OPENSSL_ROOT_DIR}/bin/${_dll}")
-                foreach(_tgt test_identity test_link test_router test_fuzz)
+                foreach(_tgt test_identity test_link test_router test_fuzz test_interop)
                     add_custom_command(TARGET ${_tgt} POST_BUILD
                         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                             "${OPENSSL_ROOT_DIR}/bin/${_dll}"
